@@ -11,62 +11,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import {
+	isArray,
+	isJSONObject,
+	isNumber,
+	isString,
+	type JSONValue,
+} from "../../core/json.js";
 import type { LinterConfig, PriorityLevel } from "../../core/types/index.js";
-
-/**
- * Type representing any valid JSON value.
- *
- * @invariant Must be serializable to JSON
- */
-type JSONValue =
-	| string
-	| number
-	| boolean
-	| null
-	| readonly JSONValue[]
-	| { readonly [key: string]: JSONValue };
-
-/**
- * Type guard to check if value is a JSON object.
- *
- * @param value Value to check
- * @returns True if value is a non-null object
- */
-function isJSONObject(
-	value: JSONValue,
-): value is Readonly<Record<string, JSONValue>> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/**
- * Type guard to check if value is a string.
- *
- * @param value Value to check
- * @returns True if value is a string
- */
-function isString(value: JSONValue): value is string {
-	return typeof value === "string";
-}
-
-/**
- * Type guard to check if value is a number.
- *
- * @param value Value to check
- * @returns True if value is a number
- */
-function isNumber(value: JSONValue): value is number {
-	return typeof value === "number";
-}
-
-/**
- * Type guard to check if value is an array.
- *
- * @param value Value to check
- * @returns True if value is an array
- */
-function isArray(value: JSONValue): value is readonly JSONValue[] {
-	return Array.isArray(value);
-}
 
 /**
  * Type representing a priority level object from JSON.

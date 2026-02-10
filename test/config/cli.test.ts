@@ -107,3 +107,20 @@ describe("parseCLIArgs: boolean flags", () => {
 		expect(opts.noPreflight).toBeTruthy();
 	});
 });
+
+describe("parseCLIArgs: package manager selection", () => {
+	it("--pm pnpm sets packageManager=pnpm", (): void => {
+		const opts = withArgv(["--pm", "pnpm"], () => parseCLIArgs());
+		expect(opts.packageManager).toBe("pnpm");
+	});
+
+	it("--package-manager yarn sets packageManager=yarn", (): void => {
+		const opts = withArgv(["--package-manager", "yarn"], () => parseCLIArgs());
+		expect(opts.packageManager).toBe("yarn");
+	});
+
+	it("invalid package manager value is ignored (auto)", (): void => {
+		const opts = withArgv(["--pm", "bun"], () => parseCLIArgs());
+		expect(opts.packageManager).toBeUndefined();
+	});
+});

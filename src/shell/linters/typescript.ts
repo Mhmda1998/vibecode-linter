@@ -14,7 +14,11 @@ import { Effect, pipe } from "effect";
 import ts from "typescript";
 
 import { InvariantViolation, ParseError } from "../../core/errors.js";
-import type { TypeScriptMessage } from "../../core/types/index.js";
+import type {
+	PackageManager,
+	TypeScriptMessage,
+} from "../../core/types/index.js";
+import { buildToolCommand } from "../utils/tool-command.js";
 
 // CHANGE: Add optional debug logger controlled by env VCL_DEBUG_TS
 // WHY: Diagnose where diagnostics are lost: project selection, pre/post filter counts
@@ -390,12 +394,18 @@ function getProgramDiagnostics(
  */
 export function getTypeScriptDiagnostics(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<
 	readonly TypeScriptMessage[],
 	ParseError | InvariantViolation
 > {
 	return Effect.gen(function* () {
-		const equivalentCommand = `npx tsc --project tsconfig.json --noEmit --pretty false`;
+		const equivalentCommand = buildToolCommand({
+			cwd: process.cwd(),
+			packageManager,
+			bin: "tsc",
+			args: ["--project", "tsconfig.json", "--noEmit", "--pretty", "false"],
+		});
 		// CHANGE: Log TypeScript diagnostic equivalent command on execution
 		// WHY: Although diagnostics run via Compiler API, operators need a CLI they can replay
 		// QUOTE(USER-LOG-CMDS): "Потом хочу видеть команды для вызова ошибок ... typescript"

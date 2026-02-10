@@ -50,7 +50,7 @@ describe("typeScript diagnostics scope (solution-style tsconfig, NodeNext)", () 
 		// Act & Assert: Use Effect.runPromise to execute Effect-based linter
 		return Effect.runPromise(
 			Effect.gen(function* (_) {
-				const msgs = yield* _(getTypeScriptDiagnostics(badFile));
+				const msgs = yield* _(getTypeScriptDiagnostics(badFile, "npm"));
 
 				// Assert: at least one TS2322 reported for bad.ts in the requested subtree
 				expect(msgs.length).toBeGreaterThan(0);
@@ -73,7 +73,7 @@ describe("typeScript diagnostics scope (solution-style tsconfig, NodeNext)", () 
 		// Act & Assert: Use Effect.runPromise to execute Effect-based linter
 		Effect.runPromise(
 			Effect.gen(function* (_) {
-				const msgs = yield* _(getTypeScriptDiagnostics("src/"));
+				const msgs = yield* _(getTypeScriptDiagnostics("src/", "npm"));
 
 				// Assert: diagnostics from bad.ts must not appear when scoping to src/
 				const leaked = msgs.some(

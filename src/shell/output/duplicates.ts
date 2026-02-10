@@ -12,6 +12,7 @@ import type {
 	SarifReport,
 	SarifResult,
 } from "../../core/types/index.js";
+import { buildJscpdCommand } from "../utils/jscpd.js";
 // CHANGE: Use node: protocol for Node.js built-in modules
 // WHY: Biome lint rule requires explicit node: prefix for clarity
 // REF: lint/style/useNodejsImportProtocol
@@ -93,12 +94,10 @@ export function generateSarifReport(
 	targetPath: string,
 ): Effect.Effect<string, Error> {
 	const reportsDir = ensureReportsDir();
+	const jscpdCommand = buildJscpdCommand({ reportsDir, targetPath });
 
 	return Effect.tryPromise({
-		try: () =>
-			execAsync(
-				`npx jscpd --reporters sarif --output ${reportsDir} ${targetPath}`,
-			),
+		try: () => execAsync(jscpdCommand),
 		catch: () => null, // jscpd exits with non-zero when duplicates are found; ignore to proceed parsing
 	}).pipe(
 		Effect.flatMap(() => Effect.sync(() => discoverSarifArtifact(reportsDir))),
