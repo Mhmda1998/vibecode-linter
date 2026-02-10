@@ -5,11 +5,21 @@
 // SOURCE: n/a
 
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { match } from "ts-pattern";
+
+import type {
+	PackageManager,
+	PackageManagerSelection,
+} from "../../core/types/index.js";
+import { canResolveFromCwd } from "../utils/node-resolve.js";
+import {
+	formatInstallDevCommand,
+	resolvePackageManager,
+} from "../utils/package-manager.js";
+import { buildToolCommand } from "../utils/tool-command.js";
 
 // CHANGE: Define __dirname and require equivalents for ES modules
 // WHY: package.json has "type": "module", __dirname and require are not available in ES modules
@@ -17,7 +27,6 @@ import { match } from "ts-pattern";
 // REF: ES module migration
 // SOURCE: Node.js ES modules documentation
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
 
 /**
  * Preflight issue codes enumerating all invariant violations we can detect prior to run.
@@ -69,18 +78,7 @@ export function hasPackageJson(cwd: string): boolean {
  *
  * Postcondition: returns true if resolution succeeds, false otherwise.
  */
-export function canResolveFromCwd(moduleName: string, cwd: string): boolean {
-	try {
-		// CHANGE: bounded resolution via explicit paths
-		// WHY: Mirrors how Node resolves peer deps in consumer projects
-		// QUOTE(ТЗ): "Использовать версию инструмента проекта"
-		// REF: REQ-CLI-PREFLIGHT-PEERS
-		require.resolve(moduleName, { paths: [cwd] });
-		return true;
-	} catch {
-		return false;
-	}
-}
+// NOTE: canResolveFromCwd moved to utils/node-resolve.ts for reuse across modules.
 
 /**
  * Detect if running from an isolated npx cache directory (advisory).
@@ -209,21 +207,49 @@ function printNoPackageJson(): void {
  *
  * Invariant: TypeScript must be installed in the consumer project
  */
-// CHANGE: extract small printer to reduce lines in dispatcher
-// WHY: satisfy max-lines-per-function without losing clarity
-// QUOTE(LINT): "Function has too many lines (max 50)"
-// REF: ESLint max-lines-per-function
-function printMissingTypescript(): void {
+interface PreflightPrintContext {
+	readonly cwd: string;
+	readonly packageManager: PackageManager;
+}
+
+function printInstallAndVerify(params: {
+	readonly ctx: PreflightPrintContext;
+	readonly installPackages: readonly string[];
+	readonly verifyBin: string;
+	readonly verifyArgs: readonly string[];
+}): void {
+	console.error("    Install:");
+	console.error(
+		`      ${formatInstallDevCommand(params.ctx.packageManager, params.installPackages)}`,
+	);
+	console.error("    Verify:");
+	console.error(
+		`      ${buildToolCommand({
+			cwd: params.ctx.cwd,
+			packageManager: params.ctx.packageManager,
+			bin: params.verifyBin,
+			args: params.verifyArgs,
+		})}\n`,
+	);
+}
+
+// CHANGE: Extract small printers that depend on detected package manager
+// WHY: Keep dispatcher small while supporting pnpm/yarn install and verify commands
+// QUOTE(ISSUE #5): "Надо что бы оно поддерживало pnpm, yarn"
+// REF: ISSUE-5
+function printMissingTypescript(ctx: PreflightPrintContext): void {
 	console.error(
 		"  • TypeScript (typescript) is not installed in this project.",
 	);
 	console.error(
 		"    Why: vibecode-linter uses your project's TypeScript as a peer dependency.",
 	);
-	console.error("    Install:");
-	console.error("      npm install --save-dev typescript");
-	console.error("    Verify:");
-	console.error("      npx tsc --version\n");
+	printInstallAndVerify({
+		ctx,
+		installPackages: ["typescript"],
+		verifyBin: "tsc",
+		verifyArgs: ["--version"],
+	});
 }
 
 /**
@@ -231,21 +257,19 @@ function printMissingTypescript(): void {
  *
  * Invariant: Biome CLI must be installed in the consumer project
  */
-// CHANGE: extract small printer to reduce lines in dispatcher
-// WHY: satisfy max-lines-per-function without losing clarity
-// QUOTE(LINT): "Function has too many lines (max 50)"
-// REF: ESLint max-lines-per-function
-function printMissingBiome(): void {
+function printMissingBiome(ctx: PreflightPrintContext): void {
 	console.error(
 		"  • Biome CLI (@biomejs/biome) is not installed in this project.",
 	);
 	console.error(
 		"    Why: vibecode-linter runs Biome as an external tool from your node_modules.",
 	);
-	console.error("    Install:");
-	console.error("      npm install --save-dev @biomejs/biome");
-	console.error("    Verify:");
-	console.error("      npx biome --version\n");
+	printInstallAndVerify({
+		ctx,
+		installPackages: ["@biomejs/biome"],
+		verifyBin: "biome",
+		verifyArgs: ["--version"],
+	});
 }
 
 /**
@@ -258,6 +282,7 @@ function printMissingBiome(): void {
  */
 function printBlockingIssues(
 	blockingIssues: readonly PreflightIssueCode[],
+	ctx: PreflightPrintContext,
 ): void {
 	console.error(
 		"\n[ERROR] Environment preflight failed. Please resolve the following issues:\n",
@@ -274,10 +299,10 @@ function printBlockingIssues(
 				printNoPackageJson();
 			})
 			.with("missingTypescript", () => {
-				printMissingTypescript();
+				printMissingTypescript(ctx);
 			})
 			.with("missingBiome", () => {
-				printMissingBiome();
+				printMissingBiome(ctx);
 			})
 			.with("npxIsolated", () => {
 				// Advisory-only: handled as warning elsewhere; not a blocker
@@ -292,6 +317,7 @@ function printBlockingIssues(
 // REF: ESLint max-lines-per-function
 function printAdvisoryWarnings(
 	advisories: readonly PreflightIssueCode[],
+	ctx: PreflightPrintContext,
 ): void {
 	if (advisories.length === 0) return;
 	// Currently the only advisory is npxIsolated
@@ -302,9 +328,18 @@ function printAdvisoryWarnings(
 		);
 		console.warn("       Recommended:");
 		console.warn(
-			"         npm install --save-dev @ton-ai-core/vibecode-linter",
+			`         ${formatInstallDevCommand(ctx.packageManager, [
+				"@ton-ai-core/vibecode-linter",
+			])}`,
 		);
-		console.warn("         npx @ton-ai-core/vibecode-linter <path>\n");
+		console.warn(
+			`         ${buildToolCommand({
+				cwd: ctx.cwd,
+				packageManager: ctx.packageManager,
+				bin: "vibecode-linter",
+				args: ["<path>"],
+			})}\n`,
+		);
 	}
 }
 
@@ -315,6 +350,12 @@ function printAdvisoryWarnings(
  */
 export function printPreflightReport(
 	issues: readonly PreflightIssueCode[],
+	options: {
+		readonly cwd?: string;
+		readonly selection?: PackageManagerSelection;
+	} = {
+		cwd: process.cwd(),
+	},
 ): void {
 	// CHANGE: Keep this function concise by delegating detailed output to helpers
 	// WHY: Satisfy max-lines-per-function while preserving actionable guidance
@@ -322,13 +363,21 @@ export function printPreflightReport(
 	// REF: ESLint max-lines-per-function
 	if (issues.length === 0) return;
 
+	const cwd = options.cwd ?? process.cwd();
+	const pmParams =
+		options.selection === undefined
+			? { cwd }
+			: { cwd, selection: options.selection };
+	const { packageManager } = resolvePackageManager(pmParams);
+	const ctx: PreflightPrintContext = { cwd, packageManager };
+
 	const blockingIssues = issues.filter((c) => c !== "npxIsolated");
 	const advisories = issues.filter((c) => c === "npxIsolated");
 
 	if (blockingIssues.length > 0) {
-		printBlockingIssues(blockingIssues);
+		printBlockingIssues(blockingIssues, ctx);
 	}
-	printAdvisoryWarnings(advisories);
+	printAdvisoryWarnings(advisories, ctx);
 }
 
 /**
@@ -338,9 +387,11 @@ export function printPreflightReport(
  */
 export function checkAndReportPreflight(
 	cwd: string = process.cwd(),
+	selection?: PackageManagerSelection,
 ): PreflightResult {
 	const result = runPreflight(cwd);
-	printPreflightReport(result.issues);
+	const reportOpts = selection === undefined ? { cwd } : { cwd, selection };
+	printPreflightReport(result.issues, reportOpts);
 	return result;
 }
 

@@ -11,7 +11,12 @@ import { Effect } from "effect";
 
 import { computeExitCode } from "../core/decision.js";
 import type { ExitCode } from "../core/models.js";
-import type { CLIOptions, LintMessageWithFile } from "../core/types/index.js";
+import type {
+	CLIOptions,
+	LintMessageWithFile,
+	PackageManager,
+	PackageManagerSelection,
+} from "../core/types/index.js";
 import { checkAndReportPreflight } from "../shell/analysis/preflight.js";
 import { parseCLIArgs } from "../shell/config/cli.js";
 import { loadLinterConfig } from "../shell/config/index.js";
@@ -34,6 +39,10 @@ import {
 	checkDependencies,
 	reportMissingDependencies,
 } from "../shell/utils/dependencies.js";
+import {
+	formatInstallDevCommand,
+	resolvePackageManager,
+} from "../shell/utils/package-manager.js";
 
 /**
  * Collect diagnostics from all configured linters.
@@ -49,6 +58,7 @@ import {
  */
 function collectLintMessagesEffect(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<LintMessageWithFile[]> {
 	return Effect.gen(function* () {
 		// CHANGE: Use Effect.all with mode: "all" for concurrent execution
@@ -56,13 +66,13 @@ function collectLintMessagesEffect(
 		// INVARIANT: All linter effects are independent and can run concurrently
 		const [eslintResults, biomeResults, tsMessages] = yield* Effect.all(
 			[
-				getESLintResults(targetPath).pipe(
+				getESLintResults(targetPath, packageManager).pipe(
 					Effect.catchAll(() => Effect.succeed([])),
 				),
-				getBiomeDiagnostics(targetPath).pipe(
+				getBiomeDiagnostics(targetPath, packageManager).pipe(
 					Effect.catchAll(() => Effect.succeed([])),
 				),
-				getTypeScriptDiagnostics(targetPath).pipe(
+				getTypeScriptDiagnostics(targetPath, packageManager).pipe(
 					Effect.catchAll(() => Effect.succeed([])),
 				),
 			],
@@ -105,6 +115,13 @@ function collectLintMessagesEffect(
 	});
 }
 
+function makeResolvePackageManagerParams(
+	cwd: string,
+	selection: CLIOptions["packageManager"],
+): { readonly cwd: string; readonly selection?: PackageManagerSelection } {
+	return selection === undefined ? { cwd } : { cwd, selection };
+}
+
 /**
  * Handle duplicate reporting and cleanup of SARIF artifacts.
  *
@@ -142,9 +159,15 @@ function handleDuplicates(
  */
 function preflightOk(cliOptions: CLIOptions): boolean {
 	if (cliOptions.noPreflight) return true;
-	const pre = checkAndReportPreflight(process.cwd());
+	const pre = checkAndReportPreflight(process.cwd(), cliOptions.packageManager);
 	if (!pre.ok) {
 		if (cliOptions.fixPeers) {
+			const { packageManager } = resolvePackageManager(
+				makeResolvePackageManagerParams(
+					process.cwd(),
+					cliOptions.packageManager,
+				),
+			);
 			const needsTs = pre.issues.includes("missingTypescript");
 			const needsBiome = pre.issues.includes("missingBiome");
 			const pkgs: string[] = [];
@@ -152,7 +175,7 @@ function preflightOk(cliOptions: CLIOptions): boolean {
 			if (needsBiome) pkgs.push("@biomejs/biome");
 			if (pkgs.length > 0) {
 				console.error("Suggested install command:");
-				console.error(`  npm install --save-dev ${pkgs.join(" ")}`);
+				console.error(`  ${formatInstallDevCommand(packageManager, pkgs)}`);
 			}
 		}
 		return false;
@@ -165,11 +188,18 @@ function preflightOk(cliOptions: CLIOptions): boolean {
  *
  * @pure false (executes checks, console output)
  */
-function haveCliDependencies(): Effect.Effect<boolean> {
+function haveCliDependencies(params: {
+	readonly cwd: string;
+	readonly packageManager: PackageManager;
+}): Effect.Effect<boolean> {
 	return Effect.gen(function* (_) {
-		const depCheck = yield* _(checkDependencies());
+		const depCheck = yield* _(checkDependencies(params.cwd));
 		if (!depCheck.allAvailable) {
-			reportMissingDependencies(depCheck.missing);
+			reportMissingDependencies({
+				cwd: params.cwd,
+				packageManager: params.packageManager,
+				missing: depCheck.missing,
+			});
 			return false;
 		}
 		return true;
@@ -190,6 +220,7 @@ function haveCliDependencies(): Effect.Effect<boolean> {
 function maybeRunAutoFixEffect(
 	targetPath: string,
 	noFix: boolean,
+	packageManager: PackageManager,
 ): Effect.Effect<void> {
 	if (noFix) return Effect.succeed(undefined);
 
@@ -197,10 +228,10 @@ function maybeRunAutoFixEffect(
 	// WHY: Runs both auto-fixers in parallel, continues on individual failures
 	return Effect.all(
 		[
-			runESLintFix(targetPath).pipe(
+			runESLintFix(targetPath, packageManager).pipe(
 				Effect.catchAll(() => Effect.succeed(undefined)),
 			),
-			runBiomeFix(targetPath).pipe(
+			runBiomeFix(targetPath, packageManager).pipe(
 				Effect.catchAll(() => Effect.succeed(undefined)),
 			),
 		],
@@ -227,23 +258,35 @@ function maybeRunAutoFixEffect(
  */
 export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode> {
 	return Effect.gen(function* (_) {
+		const { packageManager } = resolvePackageManager(
+			makeResolvePackageManagerParams(process.cwd(), cliOptions.packageManager),
+		);
+
 		// CHANGE: Preflight checks remain sync for now (will be Effect-ified in future iteration)
 		// WHY: Incremental refactoring - focus on linter execution first
 		if (!preflightOk(cliOptions)) return 1;
 
-		const depsOk = yield* _(haveCliDependencies());
+		const depsOk = yield* _(
+			haveCliDependencies({ cwd: process.cwd(), packageManager }),
+		);
 		if (!depsOk) return 1;
 
 		console.log(`🔍 Linting directory: ${cliOptions.targetPath}`);
 
 		// CHANGE: Use Effect composition for auto-fix
 		// WHY: Consistent functional approach throughout pipeline
-		yield* _(maybeRunAutoFixEffect(cliOptions.targetPath, cliOptions.noFix));
+		yield* _(
+			maybeRunAutoFixEffect(
+				cliOptions.targetPath,
+				cliOptions.noFix,
+				packageManager,
+			),
+		);
 
 		// CHANGE: Use Effect composition for linter collection
 		// WHY: Consistent functional approach throughout pipeline
 		const allMessages = yield* _(
-			collectLintMessagesEffect(cliOptions.targetPath),
+			collectLintMessagesEffect(cliOptions.targetPath, packageManager),
 		);
 
 		// CHANGE: Use Effect composition for SARIF report generation with error handling

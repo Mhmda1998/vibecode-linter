@@ -4,7 +4,12 @@
 // REF: REQ-20250210-MODULAR-ARCH
 // SOURCE: n/a
 
-import type { CLIOptions } from "../../core/types/index.js";
+import { parsePackageManagerSelection } from "../../core/package-manager.js";
+
+import type {
+	CLIOptions,
+	PackageManagerSelection,
+} from "../../core/types/index.js";
 
 // CHANGE: Extracted result type for argument processing
 // WHY: Simplifies control flow in parseCLIArgs
@@ -18,6 +23,7 @@ interface ArgProcessResult {
 	readonly noFix: boolean;
 	readonly noPreflight: boolean;
 	readonly fixPeers: boolean;
+	readonly packageManager: PackageManagerSelection;
 	readonly targetPath: string;
 	readonly skipNext: boolean;
 }
@@ -32,6 +38,22 @@ type NumericFlagHandler = (
 	index: number,
 	current: Omit<ArgProcessResult, "skipNext">,
 ) => ArgProcessResult | null;
+
+// CHANGE: Extracted string flag handler type for flags with a string value (e.g. package manager)
+// WHY: Keep processArgument complexity under the threshold by using handler maps
+// REF: ESLint complexity
+type StringFlagHandler = (
+	args: readonly string[],
+	index: number,
+	current: Omit<ArgProcessResult, "skipNext">,
+) => ArgProcessResult | null;
+
+// CHANGE: Extract boolean flag handler map to keep processArgument complexity under threshold
+// WHY: ESLint complexity rule limits branching
+// REF: ESLint complexity
+type BooleanFlagHandler = (
+	current: Omit<ArgProcessResult, "skipNext">,
+) => ArgProcessResult;
 
 // CHANGE: Created handlers for numeric flags
 // WHY: Eliminates branching in processArgument
@@ -52,6 +74,34 @@ const numericHandlers: Record<string, NumericFlagHandler> = {
 	"--max-clones": createNumericFlagHandler("maxClones"),
 	"--width": createNumericFlagHandler("width"),
 	"--context": createNumericFlagHandler("context"),
+};
+
+// CHANGE: Created handlers for string flags
+// WHY: Avoid branching in processArgument for flags that take a value
+// REF: ESLint complexity
+function createStringFlagHandler(key: "packageManager"): StringFlagHandler {
+	return (args, index, current) => {
+		if (index + 1 >= args.length) return null;
+		const raw = args[index + 1] ?? "";
+		const parsed = parsePackageManagerSelection(raw);
+		if (parsed === null) return null;
+		return { ...current, [key]: parsed, skipNext: true };
+	};
+}
+
+const stringHandlers: Record<string, StringFlagHandler> = {
+	"--pm": createStringFlagHandler("packageManager"),
+	"--package-manager": createStringFlagHandler("packageManager"),
+};
+
+const booleanHandlers: Record<string, BooleanFlagHandler> = {
+	"--no-fix": (current) => ({ ...current, noFix: true, skipNext: false }),
+	"--no-preflight": (current) => ({
+		...current,
+		noPreflight: true,
+		skipNext: false,
+	}),
+	"--fix-peers": (current) => ({ ...current, fixPeers: true, skipNext: false }),
 };
 
 // CHANGE: Simplified argument processor with handler map
@@ -77,23 +127,21 @@ function processArgument(
 		if (result !== null) return result;
 	}
 
+	// Try string flag handlers
+	const stringHandler: StringFlagHandler | undefined = (
+		stringHandlers as Record<string, StringFlagHandler | undefined>
+	)[arg];
+	if (stringHandler !== undefined) {
+		const result = stringHandler(args, index, current);
+		if (result !== null) return result;
+	}
+
 	// Handle boolean flags
-	if (arg === "--no-fix") {
-		return { ...current, noFix: true, skipNext: false };
-	}
-	if (arg === "--no-preflight") {
-		// CHANGE: Add --no-preflight flag to bypass environment checks
-		// WHY: Allow CI or advanced users to skip preflight explicitly
-		// QUOTE(ТЗ): "Добавить CLI флаги"
-		// REF: REQ-CLI-PREFLIGHT-PEERS
-		return { ...current, noPreflight: true, skipNext: false };
-	}
-	if (arg === "--fix-peers") {
-		// CHANGE: Add --fix-peers flag to print suggested install commands for missing peers
-		// WHY: Provide actionable remediation guidance
-		// QUOTE(ТЗ): "Писать внятно что необходимо сделать"
-		// REF: REQ-CLI-PREFLIGHT-PEERS
-		return { ...current, fixPeers: true, skipNext: false };
+	const boolHandler: BooleanFlagHandler | undefined = (
+		booleanHandlers as Record<string, BooleanFlagHandler | undefined>
+	)[arg];
+	if (boolHandler !== undefined) {
+		return boolHandler(current);
 	}
 
 	// Handle positional argument
@@ -132,6 +180,7 @@ export function parseCLIArgs(): CLIOptions {
 		noFix: false,
 		noPreflight: false,
 		fixPeers: false,
+		packageManager: "auto",
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -154,7 +203,7 @@ export function parseCLIArgs(): CLIOptions {
 	// QUOTE(ТЗ): "Разумные рефакторинги без дубликатов"
 	// REF: REQ-LINT-FIX
 	const { context, ...rest } = state;
-	const base: Omit<CLIOptions, "context"> = {
+	const base: Omit<CLIOptions, "context" | "packageManager"> = {
 		targetPath: rest.targetPath,
 		maxClones: rest.maxClones,
 		width: rest.width,
@@ -162,6 +211,11 @@ export function parseCLIArgs(): CLIOptions {
 		noPreflight: rest.noPreflight,
 		fixPeers: rest.fixPeers,
 	};
+	// exactOptionalPropertyTypes: omit optional fields instead of setting them to undefined
+	const withPm: Omit<CLIOptions, "context"> =
+		rest.packageManager === "auto"
+			? base
+			: { ...base, packageManager: rest.packageManager };
 	// exactOptionalPropertyTypes: отсутствие поля корректно моделирует "context?: number"
-	return context === undefined ? base : { ...base, context };
+	return context === undefined ? withPm : { ...withPm, context };
 }

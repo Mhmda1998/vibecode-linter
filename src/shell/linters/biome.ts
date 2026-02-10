@@ -17,8 +17,10 @@ import { promisify } from "node:util";
 import { Effect, pipe } from "effect";
 
 import { ExternalToolError, type ParseError } from "../../core/errors.js";
+import type { PackageManager } from "../../core/types/index.js";
 import { extractStdoutFromError } from "../../core/types/index.js";
 import { execCommand } from "../utils/exec.js";
+import { buildToolCommand } from "../utils/tool-command.js";
 import { type BiomeResult, parseBiomeOutput } from "./biome-parser.js";
 import { extractStdoutOrThrow } from "./linter-helpers.js";
 
@@ -43,9 +45,15 @@ const execAsync = promisify(exec);
  */
 export function runBiomeFix(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<void, ExternalToolError> {
 	return Effect.gen(function* () {
-		const biomeFixCommand = `npx biome check --write "${targetPath}"`;
+		const biomeFixCommand = buildToolCommand({
+			cwd: process.cwd(),
+			packageManager,
+			bin: "biome",
+			args: ["check", "--write", targetPath],
+		});
 		console.log(`🔧 Running Biome auto-fix on: ${targetPath}`);
 		// CHANGE: Log exact Biome CLI command for reproducibility
 		// WHY: Allows manual reruns that mirror automatic auto-fix behavior
@@ -110,11 +118,17 @@ export function runBiomeFix(
  */
 export function getBiomeDiagnostics(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<readonly BiomeResult[], ExternalToolError | ParseError> {
 	return Effect.gen(function* () {
 		// CHANGE: Use Effect.promise to always get stdout (even on non-zero exit)
 		// WHY: Biome returns non-zero on lint errors but with valid JSON
-		const biomeDiagnosticsCommand = `npx biome check "${targetPath}" --reporter=json`;
+		const biomeDiagnosticsCommand = buildToolCommand({
+			cwd: process.cwd(),
+			packageManager,
+			bin: "biome",
+			args: ["check", targetPath, "--reporter=json"],
+		});
 		// CHANGE: Log Biome diagnostics invocation when it actually executes
 		// WHY: Display reproducible command inline instead of at start
 		// QUOTE(USER-LOG-CMDS): "как только их вызывает он бы писал что за команду"
@@ -159,7 +173,10 @@ export function getBiomeDiagnostics(
 			!targetPath.endsWith(".tsx");
 		if (shouldFallback) {
 			console.log("🔄 Biome: Falling back to individual file checking...");
-			return yield* getBiomeDiagnosticsPerFileEffect(targetPath);
+			return yield* getBiomeDiagnosticsPerFileEffect(
+				targetPath,
+				packageManager,
+			);
 		}
 
 		return parsed.diagnostics;
@@ -183,10 +200,11 @@ export function getBiomeDiagnostics(
  */
 function getBiomeDiagnosticsPerFileEffect(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<readonly BiomeResult[], ExternalToolError> {
 	return Effect.gen(function* () {
 		const files = yield* listBiomeTargetFiles(targetPath);
-		return yield* collectPerFileDiagnostics(files);
+		return yield* collectPerFileDiagnostics(files, packageManager);
 	});
 }
 
@@ -240,11 +258,12 @@ const listBiomeTargetFiles = (
 // COMPLEXITY: O(n) where n = |files|
 const collectPerFileDiagnostics = (
 	files: readonly string[],
+	packageManager: PackageManager,
 ): Effect.Effect<readonly BiomeResult[]> =>
 	Effect.gen(function* () {
 		const allResults: BiomeResult[] = [];
 		for (const file of files) {
-			const diagnostics = yield* runBiomeCheckForFile(file);
+			const diagnostics = yield* runBiomeCheckForFile(file, packageManager);
 			allResults.push(...diagnostics);
 		}
 		return allResults;
@@ -262,8 +281,16 @@ const collectPerFileDiagnostics = (
 // COMPLEXITY: O(1) per file (Biome CLI dominates)
 const runBiomeCheckForFile = (
 	file: string,
+	packageManager: PackageManager,
 ): Effect.Effect<readonly BiomeResult[]> =>
-	execCommand(`npx biome check "${file}" --reporter=json`)
+	execCommand(
+		buildToolCommand({
+			cwd: process.cwd(),
+			packageManager,
+			bin: "biome",
+			args: ["check", file, "--reporter=json"],
+		}),
+	)
 		.pipe(Effect.catchAll(() => Effect.succeed("")))
 		.pipe(
 			Effect.flatMap((stdout) =>

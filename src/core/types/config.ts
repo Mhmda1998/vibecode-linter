@@ -35,6 +35,9 @@ export interface LinterConfig {
  * @property context Количество строк контекста для diff (зарезервировано)
  * @property noFix Флаг отключения автоисправлений
  */
+export type PackageManager = "npm" | "pnpm" | "yarn";
+export type PackageManagerSelection = PackageManager | "auto";
+
 export interface CLIOptions {
 	readonly targetPath: string;
 	readonly maxClones: number;
@@ -43,6 +46,7 @@ export interface CLIOptions {
 	readonly noFix: boolean;
 	readonly noPreflight: boolean;
 	readonly fixPeers: boolean;
+	readonly packageManager?: PackageManagerSelection;
 }
 
 /**

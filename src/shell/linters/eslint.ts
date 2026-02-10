@@ -17,12 +17,25 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 
 import { ExternalToolError, ParseError } from "../../core/errors.js";
-import type { LintResult } from "../../core/types/index.js";
+import type { LintResult, PackageManager } from "../../core/types/index.js";
 import { extractStdoutFromError } from "../../core/types/index.js";
 import { execCommand } from "../utils/exec.js";
+import { buildToolCommand } from "../utils/tool-command.js";
 import { extractStdoutOrThrow } from "./linter-helpers.js";
 
 const execAsync = promisify(exec);
+
+function buildESLintCommand(
+	packageManager: PackageManager,
+	args: readonly string[],
+): string {
+	return buildToolCommand({
+		cwd: process.cwd(),
+		packageManager,
+		bin: "eslint",
+		args,
+	});
+}
 
 /**
  * Интерфейс результата ESLint (использует базовый LintResult).
@@ -44,11 +57,17 @@ export type ESLintResult = LintResult;
  * @effect Effect<void, ExternalToolError>
  * @invariant targetPath не пустой
  */
-export function runESLintFix(
+export const runESLintFix = (
 	targetPath: string,
-): Effect.Effect<void, ExternalToolError> {
-	return Effect.gen(function* () {
-		const eslintCommand = `npx eslint "${targetPath}" --ext .ts,.tsx --fix`;
+	packageManager: PackageManager,
+): Effect.Effect<void, ExternalToolError> =>
+	Effect.gen(function* () {
+		const eslintCommand = buildESLintCommand(packageManager, [
+			targetPath,
+			"--ext",
+			".ts,.tsx",
+			"--fix",
+		]);
 		console.log(`🔧 Running ESLint auto-fix on: ${targetPath}`);
 		// CHANGE: Surface exact ESLint command for reproducibility
 		// WHY: Operator must be able to rerun the same invocation outside vibecode-linter
@@ -92,7 +111,6 @@ export function runESLintFix(
 
 		console.log(`✅ ESLint auto-fix completed`);
 	});
-}
 
 /**
  * Получает результаты ESLint для указанного пути.
@@ -112,9 +130,16 @@ export function runESLintFix(
  */
 export function getESLintResults(
 	targetPath: string,
+	packageManager: PackageManager,
 ): Effect.Effect<readonly ESLintResult[], ExternalToolError | ParseError> {
 	return Effect.gen(function* () {
-		const eslintCommand = `npx eslint "${targetPath}" --ext .ts,.tsx --format json`;
+		const eslintCommand = buildESLintCommand(packageManager, [
+			targetPath,
+			"--ext",
+			".ts,.tsx",
+			"--format",
+			"json",
+		]);
 		// CHANGE: Log ESLint diagnostics invocation exactly when it runs
 		// WHY: Give operators immediate visibility into the command they can replay
 		// QUOTE(USER-LOG-CMDS): "Я хочу что бы он как только их вызывает он бы писал что за команду"

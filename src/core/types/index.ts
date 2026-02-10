@@ -8,6 +8,8 @@ export type {
 	CLIOptions,
 	ExecError,
 	LinterConfig,
+	PackageManager,
+	PackageManagerSelection,
 	PriorityLevel,
 } from "./config.js";
 export type {
