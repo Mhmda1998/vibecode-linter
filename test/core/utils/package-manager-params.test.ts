@@ -1,7 +1,7 @@
-// CHANGE: Add unit tests for shared makeResolvePackageManagerParams helper
-// WHY: Verify pure helper used by both runLinter.ts and preflight.ts
+// CHANGE: Verify all helper test imports use the correct core types path
+// WHY: types/index.ts re-exports PackageManagerSelection via type-only export; must be import type
 // QUOTE(ТЗ): "Для библиотеки тестов я использую vitest"
-// REF: Architecture plan - module-level unit tests for CORE helpers
+// REF: Architecture plan - module-level unit tests
 // PURITY: test (pure function under test, no mocks needed)
 
 import { describe, expect, it } from "vitest";
@@ -38,5 +38,11 @@ describe("makeResolvePackageManagerParams", () => {
 
 		expect(result1).toEqual(result2);
 		expect(result1).not.toBe(result2);
+	});
+
+	it("handles explicit 'auto' selection by passing it through", () => {
+		const result = makeResolvePackageManagerParams("/cwd", "auto");
+		expect(result.selection).toBe("auto");
+		expect(result.cwd).toBe("/cwd");
 	});
 });
