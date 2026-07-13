@@ -1,7 +1,7 @@
-// CHANGE: Introduce Application layer orchestration (APP) separated from SHELL and CORE
-// WHY: Enforce FCIS — APP composes pure CORE logic with SHELL integrations (to be abstracted as services later)
-// QUOTE(ТЗ): "FUNCTIONAL CORE, IMPERATIVE SHELL"; "CORE никогда не вызывает SHELL"; "Зависимости: SHELL → CORE"
-// REF: Architecture plan (Iteration 1)
+// CHANGE: Use shared makeResolvePackageManagerParams + cache process.cwd()
+// WHY: Eliminate duplication; process.cwd() is a syscall, cache it
+// QUOTE(ТЗ): "FUNCTIONAL CORE, IMPERATIVE SHELL"
+// REF: Architecture plan - shared helpers in core
 // PURITY: APP (no process.exit here; minimal console usage will be moved to ConsoleService in Iteration 2)
 // EFFECT: Effect<ExitCode, AppError>
 // INVARIANT: Returns ExitCode as value; no termination side effects
@@ -12,6 +12,7 @@ import { Effect } from "effect";
 import { computeExitCode } from "../core/decision.js";
 import type { ExitCode } from "../core/models.js";
 import type { CLIOptions } from "../core/types/index.js";
+import { makeResolvePackageManagerParams } from "../core/utils/package-manager-params.js";
 import { parseCLIArgs } from "../shell/config/cli.js";
 import { loadLinterConfig } from "../shell/config/index.js";
 import { generateSarifReport, processResults } from "../shell/output/index.js";
@@ -22,13 +23,6 @@ import { maybeRunAutoFixEffect } from "./auto-fix.js";
 import { collectLintMessagesEffect } from "./collect-lint-messages.js";
 import { handleDuplicates } from "./duplicates.js";
 import { haveCliDependencies, preflightOk } from "./preflight.js";
-
-function makeResolvePackageManagerParams(
-	cwd: string,
-	selection: CLIOptions["packageManager"],
-): { readonly cwd: string; readonly selection?: typeof selection } {
-	return selection === undefined ? { cwd } : { cwd, selection };
-}
 
 /**
  * Orchestrates the linter run and returns ExitCode as value (no process.exit).
@@ -49,14 +43,18 @@ function makeResolvePackageManagerParams(
  */
 export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode> {
 	return Effect.gen(function* (_) {
+		// CHANGE: Cache process.cwd() once
+		// WHY: process.cwd() is a syscall; avoid calling 4 times in this function
+		const cwd = process.cwd();
+
 		const { packageManager } = resolvePackageManager(
-			makeResolvePackageManagerParams(process.cwd(), cliOptions.packageManager),
+			makeResolvePackageManagerParams(cwd, cliOptions.packageManager),
 		);
 
 		if (!preflightOk(cliOptions)) return 1;
 
 		const depsOk = yield* _(
-			haveCliDependencies({ cwd: process.cwd(), packageManager }),
+			haveCliDependencies({ cwd, packageManager }),
 		);
 		if (!depsOk) return 1;
 
