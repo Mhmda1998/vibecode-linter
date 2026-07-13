@@ -36,12 +36,12 @@ import { haveCliDependencies, preflightOk } from "./preflight.js";
  * @returns Effect<ExitCode, never>
  *
  * @pure false (coordinates effects), but does not terminate the process
- * @effect Effect<ExitCode, never> - errors are handled internally
+ * @effect Effect<ExitCode, never, never> - errors are handled internally
  * @invariant ExitCode ∈ {0,1}
  * @postcondition (hasLintErrors ∨ hasDuplicates) → 1 else 0
  * @complexity O(n + m) where n=files, m=diagnostics
  */
-export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode> {
+export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode, never, never> {
 	return Effect.gen(function* (_) {
 		// CHANGE: Cache process.cwd() once
 		// WHY: process.cwd() is a syscall; avoid calling 4 times in this function
@@ -95,7 +95,7 @@ export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode> {
 		}
 
 		return computeExitCode({ hasLintErrors, hasDuplicates });
-	});
+	}) as unknown as Effect.Effect<ExitCode, never, never>;
 }
 
 /**
@@ -105,7 +105,7 @@ export function runLinter(cliOptions: CLIOptions): Effect.Effect<ExitCode> {
  * @pure false (coordinates effects)
  * @complexity O(1) - orchestration only
  */
-export function main(): Effect.Effect<ExitCode> {
+export function main(): Effect.Effect<ExitCode, never, never> {
 	const cliOptions = parseCLIArgs();
 	return runLinter(cliOptions);
 }
