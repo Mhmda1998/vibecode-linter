@@ -1,5 +1,5 @@
-// CHANGE: Add unit tests for auto-fix module extracted from runLinter.ts
-// WHY: Verify behavioral parity after refactor; lock in Effect-based composition
+// CHANGE: Correct test imports + runESLintFix/runBiomeFix signatures
+// WHY: Functions are arrow const, not function declarations; need proper PackageManager typing
 // QUOTE(ТЗ): "Для библиотеки тестов я использую vitest"
 // REF: Architecture plan - module-level unit tests
 // PURITY: test (no SHELL effects; linter fns are mocked)
@@ -27,8 +27,12 @@ describe("maybeRunAutoFixEffect", () => {
 	});
 
 	it("runs both fixers when noFix is false", async () => {
-		vi.mocked(runESLintFix).mockReturnValue(Effect.succeed(undefined));
-		vi.mocked(runBiomeFix).mockReturnValue(Effect.succeed(undefined));
+		vi.mocked(runESLintFix).mockReturnValue(
+			Effect.succeed(undefined) as ReturnType<typeof runESLintFix>,
+		);
+		vi.mocked(runBiomeFix).mockReturnValue(
+			Effect.succeed(undefined) as ReturnType<typeof runBiomeFix>,
+		);
 
 		const result = await Effect.runPromise(
 			maybeRunAutoFixEffect("/some/path", false, "pnpm"),
@@ -43,7 +47,9 @@ describe("maybeRunAutoFixEffect", () => {
 		vi.mocked(runESLintFix).mockReturnValue(
 			Effect.fail(new Error("eslint failed") as never),
 		);
-		vi.mocked(runBiomeFix).mockReturnValue(Effect.succeed(undefined));
+		vi.mocked(runBiomeFix).mockReturnValue(
+			Effect.succeed(undefined) as ReturnType<typeof runBiomeFix>,
+		);
 
 		const result = await Effect.runPromise(
 			maybeRunAutoFixEffect("/some/path", false, "npm"),
