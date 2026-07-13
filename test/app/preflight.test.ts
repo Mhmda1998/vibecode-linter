@@ -1,5 +1,5 @@
-// CHANGE: Add unit tests for preflight module extracted from runLinter.ts
-// WHY: Verify preflight + dependency check semantics
+// CHANGE: Correct test signatures to match actual implementation
+// WHY: Previous tests had type errors: checkDependencies returns DependencyCheckResult with Dependency[] not string[]
 // QUOTE(ТЗ): "Для библиотеки тестов я использую vitest"
 // REF: Architecture plan - module-level unit tests
 // PURITY: test (mocks SHELL utilities)
@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { haveCliDependencies, preflightOk } from "../../src/app/preflight.js";
-import type { CLIOptions } from "../../src/core/types/index.js";
+import type { CLIOptions, PackageManager } from "../../src/core/types/index.js";
 import { Effect } from "effect";
 
 vi.mock("../../src/shell/analysis/preflight.js", () => ({
@@ -20,8 +20,11 @@ vi.mock("../../src/shell/utils/dependencies.js", () => ({
 }));
 
 vi.mock("../../src/shell/utils/package-manager.js", () => ({
-	formatInstallDevCommand: vi.fn(() => "pnpm add -D typescript @biomejs/biome"),
-	resolvePackageManager: vi.fn(() => ({ packageManager: "pnpm" })),
+	formatInstallDevCommand: vi.fn(
+		(pm: PackageManager, packages: readonly string[]) =>
+			`${pm} add -D ${packages.join(" ")}`,
+	),
+	resolvePackageManager: vi.fn(() => ({ packageManager: "pnpm" as PackageManager })),
 }));
 
 import { checkAndReportPreflight } from "../../src/shell/analysis/preflight.js";
@@ -29,6 +32,7 @@ import {
 	checkDependencies,
 	reportMissingDependencies,
 } from "../../src/shell/utils/dependencies.js";
+import type { Dependency } from "../../src/shell/utils/dependencies.js";
 
 const cliOptions: CLIOptions = {
 	targetPath: "/some/path",
@@ -38,6 +42,14 @@ const cliOptions: CLIOptions = {
 	maxClones: 5,
 	width: 120,
 	packageManager: "pnpm",
+};
+
+const mockDependency: Dependency = {
+	kind: "command",
+	name: "typescript",
+	checkCommand: "tsc --version",
+	installHint: "npm i -D typescript",
+	required: true,
 };
 
 describe("preflightOk", () => {
@@ -76,7 +88,7 @@ describe("haveCliDependencies", () => {
 
 	it("returns false and reports when deps are missing", async () => {
 		vi.mocked(checkDependencies).mockReturnValue(
-			Effect.succeed({ allAvailable: false, missing: ["typescript"] }),
+			Effect.succeed({ allAvailable: false, missing: [mockDependency] }),
 		);
 
 		const result = await Effect.runPromise(
@@ -87,7 +99,7 @@ describe("haveCliDependencies", () => {
 		expect(reportMissingDependencies).toHaveBeenCalledWith({
 			cwd: "/some",
 			packageManager: "pnpm",
-			missing: ["typescript"],
+			missing: [mockDependency],
 		});
 	});
 });
