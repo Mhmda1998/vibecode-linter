@@ -1,7 +1,7 @@
-// CHANGE: Extract preflight and dependency checks into dedicated module
-// WHY: runLinter.ts exceeded 300 lines; preflight is a separate concern from orchestration
-// QUOTE(ТЗ): "300 lines max per file"
-// REF: Architecture plan - FCIS, single-responsibility modules
+// CHANGE: Use shared makeResolvePackageManagerParams from core/utils
+// WHY: Eliminate duplication (DRY); single source of truth in CORE
+// QUOTE(ТЗ): "FUNCTIONAL CORE, IMPERATIVE SHELL"
+// REF: Architecture plan - shared helpers in core
 // PURITY: SHELL-adjacent (reads environment, console output, executes checks)
 // EFFECT: preflight sync; haveCliDependencies is Effect.Effect
 // INVARIANT: preflight returns boolean; haveCliDependencies returns Effect<boolean>
@@ -9,6 +9,7 @@
 
 import { Effect } from "effect";
 
+import { makeResolvePackageManagerParams } from "../core/utils/package-manager-params.js";
 import type { CLIOptions, PackageManager } from "../core/types/index.js";
 import { checkAndReportPreflight } from "../shell/analysis/preflight.js";
 import {
@@ -20,28 +21,22 @@ import {
 	resolvePackageManager,
 } from "../shell/utils/package-manager.js";
 
-function makeResolvePackageManagerParams(
-	cwd: string,
-	selection: CLIOptions["packageManager"],
-): { readonly cwd: string; readonly selection?: typeof selection } {
-	return selection === undefined ? { cwd } : { cwd, selection };
-}
-
 /**
  * Preflight validation. Returns boolean success instead of terminating.
+ *
+ * CHANGE: Cache process.cwd() in const to avoid repeated calls
+ * WHY: process.cwd() is a syscall; read once and reuse
  *
  * @pure false (reads environment, console output)
  */
 export function preflightOk(cliOptions: CLIOptions): boolean {
 	if (cliOptions.noPreflight) return true;
-	const pre = checkAndReportPreflight(process.cwd(), cliOptions.packageManager);
+	const cwd = process.cwd();
+	const pre = checkAndReportPreflight(cwd, cliOptions.packageManager);
 	if (!pre.ok) {
 		if (cliOptions.fixPeers) {
 			const { packageManager } = resolvePackageManager(
-				makeResolvePackageManagerParams(
-					process.cwd(),
-					cliOptions.packageManager,
-				),
+				makeResolvePackageManagerParams(cwd, cliOptions.packageManager),
 			);
 			const needsTs = pre.issues.includes("missingTypescript");
 			const needsBiome = pre.issues.includes("missingBiome");
