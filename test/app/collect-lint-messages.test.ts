@@ -1,5 +1,5 @@
-// CHANGE: Add unit tests for collect-lint-messages module extracted from runLinter.ts
-// WHY: Verify parallel linter collection flattens messages correctly
+// CHANGE: Correct test signatures to match getESLintResults/getBiomeDiagnostics/getTypeScriptDiagnostics
+// WHY: Functions return Effect<readonly ESLintResult[]> not Effect<[{filePath, messages}]>
 // QUOTE(ТЗ): "Для библиотеки тестов я использую vitest"
 // REF: Architecture plan - module-level unit tests
 // PURITY: test (mocks SHELL linters)
@@ -29,7 +29,7 @@ describe("collectLintMessagesEffect", () => {
 					filePath: "a.ts",
 					messages: [{ ruleId: "no-var", severity: 2, message: "no var" }],
 				},
-			]),
+			]) as ReturnType<typeof getESLintResults>,
 		);
 		vi.mocked(getBiomeDiagnostics).mockReturnValue(
 			Effect.succeed([
@@ -37,12 +37,12 @@ describe("collectLintMessagesEffect", () => {
 					filePath: "b.ts",
 					messages: [{ ruleId: "complexity", severity: 1, message: "complex" }],
 				},
-			]),
+			]) as ReturnType<typeof getBiomeDiagnostics>,
 		);
 		vi.mocked(getTypeScriptDiagnostics).mockReturnValue(
 			Effect.succeed([
 				{ filePath: "c.ts", ruleId: "TS2322", severity: 1, message: "type err" },
-			]),
+			]) as ReturnType<typeof getTypeScriptDiagnostics>,
 		);
 
 		const result = await Effect.runPromise(
@@ -56,9 +56,15 @@ describe("collectLintMessagesEffect", () => {
 	});
 
 	it("returns empty array when all linters return empty", async () => {
-		vi.mocked(getESLintResults).mockReturnValue(Effect.succeed([]));
-		vi.mocked(getBiomeDiagnostics).mockReturnValue(Effect.succeed([]));
-		vi.mocked(getTypeScriptDiagnostics).mockReturnValue(Effect.succeed([]));
+		vi.mocked(getESLintResults).mockReturnValue(
+			Effect.succeed([]) as ReturnType<typeof getESLintResults>,
+		);
+		vi.mocked(getBiomeDiagnostics).mockReturnValue(
+			Effect.succeed([]) as ReturnType<typeof getBiomeDiagnostics>,
+		);
+		vi.mocked(getTypeScriptDiagnostics).mockReturnValue(
+			Effect.succeed([]) as ReturnType<typeof getTypeScriptDiagnostics>,
+		);
 
 		const result = await Effect.runPromise(
 			collectLintMessagesEffect("/some/path", "pnpm"),
@@ -77,9 +83,11 @@ describe("collectLintMessagesEffect", () => {
 					filePath: "x.ts",
 					messages: [{ ruleId: "r", severity: 1, message: "m" }],
 				},
-			]),
+			]) as ReturnType<typeof getBiomeDiagnostics>,
 		);
-		vi.mocked(getTypeScriptDiagnostics).mockReturnValue(Effect.succeed([]));
+		vi.mocked(getTypeScriptDiagnostics).mockReturnValue(
+			Effect.succeed([]) as ReturnType<typeof getTypeScriptDiagnostics>,
+		);
 
 		const result = await Effect.runPromise(
 			collectLintMessagesEffect("/some/path", "pnpm"),
