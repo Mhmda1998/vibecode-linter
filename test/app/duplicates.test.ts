@@ -1,5 +1,5 @@
-// CHANGE: Add unit tests for duplicates module extracted from runLinter.ts
-// WHY: Verify duplicate detection + cleanup behavior is preserved
+// CHANGE: Correct test types to match real DuplicateInfo shape
+// WHY: Real DuplicateInfo has startA/endA/startB/endB not lines/file1/file2
 // QUOTE(ТЗ): "Для библиотеки тестов я использую vitest"
 // REF: Architecture plan - module-level unit tests
 // PURITY: test (mocks SHELL output functions)
@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { handleDuplicates } from "../../src/app/duplicates.js";
-import type { CLIOptions } from "../../src/core/types/index.js";
+import type { CLIOptions, DuplicateInfo } from "../../src/core/types/index.js";
 
 vi.mock("../../src/shell/output/index.js", () => ({
 	parseSarifReport: vi.fn(),
@@ -31,6 +31,17 @@ const baseCliOptions: CLIOptions = {
 	packageManager: "pnpm",
 };
 
+const fakeDuplicates: readonly DuplicateInfo[] = [
+	{
+		fileA: "a.ts",
+		fileB: "b.ts",
+		startA: 1,
+		endA: 10,
+		startB: 20,
+		endB: 30,
+	},
+];
+
 describe("handleDuplicates", () => {
 	it("returns false when SARIF has no duplicates and cleans up", () => {
 		vi.mocked(parseSarifReport).mockReturnValue([]);
@@ -48,9 +59,6 @@ describe("handleDuplicates", () => {
 	});
 
 	it("returns true and displays clones when duplicates exist", () => {
-		const fakeDuplicates = [
-			{ file1: "a.ts", file2: "b.ts", lines: 10 },
-		] as never;
 		vi.mocked(parseSarifReport).mockReturnValue(fakeDuplicates);
 
 		const result = handleDuplicates(false, "/tmp/report.sarif", baseCliOptions);
@@ -68,9 +76,7 @@ describe("handleDuplicates", () => {
 	});
 
 	it("suppresses output when lint errors exist", () => {
-		vi.mocked(parseSarifReport).mockReturnValue([
-			{ file1: "a.ts", file2: "b.ts", lines: 10 },
-		] as never);
+		vi.mocked(parseSarifReport).mockReturnValue(fakeDuplicates);
 
 		const result = handleDuplicates(true, "/tmp/report.sarif", baseCliOptions);
 
